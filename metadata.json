@@ -1,0 +1,6 @@
+{
+  "name": "THE LIGHT",
+  "description": "THE LIGHT of Akwa Ibom - Brighter We Shine! Vertical video feed, Community chat, Light Dating (18+), Ibibio Language Zone, Sports & Entertainment, Opportunities and Admin dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
