@@ -1,13 +1,17 @@
 package com.example.ui.screens
 
+import android.content.Context
 import android.content.Intent
-import android.media.MediaPlayer
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import android.widget.VideoView
+import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.Canvas
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,7 +20,11 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,13 +33,22 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.example.data.VideoItem
 import com.example.ui.theme.LightEmeraldGreen
 import com.example.ui.theme.LightSunGold
@@ -43,9 +60,11 @@ fun VideoFeedScreen(
     viewModel: LightViewModel,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val videos by viewModel.allVideos.collectAsState()
     val selectedCategory by viewModel.videoCategoryFilter.collectAsState()
     var isUploadDialogOpen by remember { mutableStateOf(false) }
+    var isOffline by remember { mutableStateOf(!checkInternetConnection(context)) }
 
     val filteredVideos = remember(videos, selectedCategory) {
         if (selectedCategory == "All") videos
@@ -58,7 +77,13 @@ fun VideoFeedScreen(
             .background(Color.Black)
             .testTag("video_feed_screen")
     ) {
-        if (filteredVideos.isEmpty()) {
+        if (isOffline) {
+            OfflineVideoState(
+                onRetry = {
+                    isOffline = !checkInternetConnection(context)
+                }
+            )
+        } else if (filteredVideos.isEmpty()) {
             EmptyVideoState(
                 category = selectedCategory,
                 onResetCategory = { viewModel.setVideoCategoryFilter("All") },
@@ -75,7 +100,7 @@ fun VideoFeedScreen(
                 val video = filteredVideos[page]
                 val isCurrentPage = pagerState.currentPage == page
 
-                VideoPageItem(
+                TikTokVideoPageItem(
                     video = video,
                     isActive = isCurrentPage,
                     onLikeToggle = { viewModel.toggleVideoLike(video) },
@@ -91,7 +116,7 @@ fun VideoFeedScreen(
             onSelectCategory = { viewModel.setVideoCategoryFilter(it) },
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 8.dp)
+                .padding(top = 10.dp)
         )
 
         // Upload Video Floating Button
@@ -102,7 +127,7 @@ fun VideoFeedScreen(
             shape = CircleShape,
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = 16.dp, bottom = 20.dp)
+                .padding(start = 16.dp, bottom = 18.dp)
                 .testTag("btn_upload_video")
         ) {
             Icon(
@@ -124,8 +149,9 @@ fun VideoFeedScreen(
     }
 }
 
+@OptIn(UnstableApi::class)
 @Composable
-private fun VideoPageItem(
+private fun TikTokVideoPageItem(
     video: VideoItem,
     isActive: Boolean,
     onLikeToggle: () -> Unit,
@@ -133,12 +159,66 @@ private fun VideoPageItem(
     onCommentClick: () -> Unit
 ) {
     val context = LocalContext.current
-    var isPlaying by remember { mutableStateOf(true) }
-    var isMuted by remember { mutableStateOf(false) }
-    var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
-    var mediaPlayerRef by remember { mutableStateOf<MediaPlayer?>(null) }
 
-    // Rotate animation for sound disc
+    var isPlayingState by remember { mutableStateOf(true) }
+    var isBuffering by remember { mutableStateOf(true) }
+    var isMuted by remember { mutableStateOf(false) }
+    var playbackError by remember { mutableStateOf<String?>(null) }
+    var showPauseOverlay by remember { mutableStateOf(false) }
+
+    // Media3 ExoPlayer Instance per video page
+    val exoPlayer = remember(context, video.videoUrl) {
+        ExoPlayer.Builder(context).build().apply {
+            repeatMode = Player.REPEAT_MODE_ONE
+            val mediaItem = MediaItem.fromUri(Uri.parse(video.videoUrl))
+            setMediaItem(mediaItem)
+            prepare()
+        }
+    }
+
+    // Playback state synchronization with Pager (Auto play when visible, pause when swiped away)
+    LaunchedEffect(isActive, isPlayingState) {
+        if (isActive && isPlayingState) {
+            exoPlayer.playWhenReady = true
+            exoPlayer.play()
+        } else {
+            exoPlayer.pause()
+        }
+    }
+
+    // Volume handling
+    LaunchedEffect(isMuted) {
+        exoPlayer.volume = if (isMuted) 0f else 1f
+    }
+
+    // Lifecycle and Player Event Listener
+    DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                isBuffering = (state == Player.STATE_BUFFERING)
+                if (state == Player.STATE_READY) {
+                    playbackError = null
+                }
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                isPlayingState = isPlaying
+                showPauseOverlay = !isPlaying
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                isBuffering = false
+                playbackError = error.message ?: "Unable to stream video"
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose {
+            exoPlayer.removeListener(listener)
+            exoPlayer.release()
+        }
+    }
+
+    // Rotating vinyl disc animation
     val infiniteTransition = rememberInfiniteTransition(label = "disc")
     val angle by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -154,64 +234,41 @@ private fun VideoPageItem(
         modifier = Modifier
             .fillMaxSize()
             .clickable {
-                videoViewRef?.let { vv ->
-                    if (vv.isPlaying) {
-                        vv.pause()
-                        isPlaying = false
-                    } else {
-                        vv.start()
-                        isPlaying = true
-                    }
+                // Tap to toggle play/pause immediately
+                if (exoPlayer.isPlaying) {
+                    exoPlayer.pause()
+                } else {
+                    exoPlayer.play()
                 }
             }
     ) {
-        // Video View with auto-looping playback
+        // Fullscreen ExoPlayer Surface
         AndroidView(
             factory = { ctx ->
-                VideoView(ctx).apply {
+                PlayerView(ctx).apply {
+                    player = exoPlayer
+                    useController = false
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    setVideoURI(Uri.parse(video.videoUrl))
-                    setOnPreparedListener { mp ->
-                        mediaPlayerRef = mp
-                        mp.isLooping = true
-                        if (isMuted) mp.setVolume(0f, 0f) else mp.setVolume(1f, 1f)
-                        if (isActive) {
-                            start()
-                            isPlaying = true
-                        }
-                    }
-                    setOnErrorListener { _, _, _ ->
-                        // Graceful recovery for unavailable stream
-                        true
-                    }
-                    videoViewRef = this
                 }
             },
-            update = { vv ->
-                if (isActive) {
-                    if (!vv.isPlaying && isPlaying) {
-                        vv.start()
-                    }
-                } else {
-                    if (vv.isPlaying) {
-                        vv.pause()
-                    }
-                }
+            update = { playerView ->
+                playerView.player = exoPlayer
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // Gradient Shadow Overlay for text readability
+        // Dark gradient overlay for text readability
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color.Black.copy(alpha = 0.4f),
+                            Color.Black.copy(alpha = 0.35f),
                             Color.Transparent,
                             Color.Black.copy(alpha = 0.85f)
                         )
@@ -219,32 +276,95 @@ private fun VideoPageItem(
                 )
         )
 
-        // Pause indicator overlay
-        if (!isPlaying) {
+        // Buffering Indicator
+        if (isBuffering && playbackError == null) {
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .size(68.dp)
-                    .background(Color.Black.copy(alpha = 0.5f), CircleShape),
+                    .size(64.dp)
+                    .background(Color.Black.copy(alpha = 0.4f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = "Paused",
-                    tint = Color.White,
-                    modifier = Modifier.size(44.dp)
+                CircularProgressIndicator(
+                    color = LightSunGold,
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.size(36.dp)
                 )
             }
         }
 
-        // Bottom Creator & Content Info
+        // Tap-to-play Paused Icon Overlay
+        AnimatedVisibility(
+            visible = showPauseOverlay && !isBuffering,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.Center)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "Paused - Tap to play",
+                    tint = Color.White,
+                    modifier = Modifier.size(46.dp)
+                )
+            }
+        }
+
+        // Playback Error fallback banner with retry
+        if (playbackError != null) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 32.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = Color.Black.copy(alpha = 0.8f)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SignalCellularConnectedNoInternet0Bar,
+                        contentDescription = null,
+                        tint = LightSunriseOrange,
+                        modifier = Modifier.size(40.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Buffering stream...",
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        fontSize = 14.sp
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = {
+                            playbackError = null
+                            isBuffering = true
+                            exoPlayer.prepare()
+                            exoPlayer.play()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = LightEmeraldGreen)
+                    ) {
+                        Text("Reload Video")
+                    }
+                }
+            }
+        }
+
+        // Left Bottom Creator & Movie Information
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .fillMaxWidth(0.78f)
-                .padding(start = 16.dp, bottom = 24.dp)
+                .fillMaxWidth(0.76f)
+                .padding(start = 16.dp, bottom = 22.dp)
         ) {
-            // Category Badge
+            // Regional Category Badge
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = when (video.category.lowercase()) {
@@ -258,47 +378,58 @@ private fun VideoPageItem(
                     text = "${video.category.uppercase()} ENTERTAINMENT",
                     color = Color.White,
                     fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 0.5.sp,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                 )
             }
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Creator Handle
-            Text(
-                text = video.handle,
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp
-            )
+            // Creator Name and Handle
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = video.creator,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = video.handle,
+                    color = LightSunGold,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Title & Description
+            // Video Title & Caption
             Text(
                 text = video.title,
                 color = Color.White.copy(alpha = 0.95f),
                 fontSize = 13.sp,
                 maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 17.sp
             )
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Sound Title & Vinyl Animation
+            // Sound Track info
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Default.MusicNote,
                     contentDescription = null,
                     tint = LightSunGold,
-                    modifier = Modifier.size(15.dp)
+                    modifier = Modifier.size(14.dp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = video.soundTitle,
                     color = LightSunGold,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -306,17 +437,17 @@ private fun VideoPageItem(
             }
         }
 
-        // Right Side Vertical Action Bar
+        // Right Vertical TikTok Action Bar
         Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = 12.dp, bottom = 24.dp),
+                .padding(end = 12.dp, bottom = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             // Creator Avatar with Follow Button
             Box(
-                modifier = Modifier.size(50.dp),
+                modifier = Modifier.size(52.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Box(
@@ -329,7 +460,7 @@ private fun VideoPageItem(
                     Text(
                         text = video.creator.take(2).uppercase(),
                         color = Color.White,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Black,
                         fontSize = 14.sp
                     )
                 }
@@ -338,10 +469,11 @@ private fun VideoPageItem(
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .size(18.dp)
+                            .size(19.dp)
                             .clip(CircleShape)
-                            .background(Color.Red)
-                            .clickable(onClick = onFollowToggle),
+                            .background(Color(0xFFE53935))
+                            .clickable(onClick = onFollowToggle)
+                            .testTag("btn_follow_${video.id}"),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -356,16 +488,16 @@ private fun VideoPageItem(
 
             // Like Action
             ActionIconButton(
-                icon = if (video.isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                icon = if (video.isLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder,
                 count = video.likesCount.toString(),
-                tint = if (video.isLiked) Color.Red else Color.White,
+                tint = if (video.isLiked) Color(0xFFE53935) else Color.White,
                 onClick = onLikeToggle,
                 tag = "btn_like_${video.id}"
             )
 
             // Comments Action
             ActionIconButton(
-                icon = Icons.Default.ChatBubbleOutline,
+                icon = Icons.Outlined.ChatBubbleOutline,
                 count = video.commentsCount.toString(),
                 tint = Color.White,
                 onClick = onCommentClick,
@@ -380,7 +512,7 @@ private fun VideoPageItem(
                 onClick = {
                     val shareIntent = Intent().apply {
                         action = Intent.ACTION_SEND
-                        putExtra(Intent.EXTRA_TEXT, "Watch '${video.title}' on THE LIGHT of Akwa Ibom! Brighter We Shine!")
+                        putExtra(Intent.EXTRA_TEXT, "Watch '${video.title}' on THE LIGHT OF AKWA IBOM! “BRIGHTER WE SHINE!”")
                         type = "text/plain"
                     }
                     context.startActivity(Intent.createChooser(shareIntent, "Share Video via"))
@@ -388,20 +520,18 @@ private fun VideoPageItem(
                 tag = "btn_share_${video.id}"
             )
 
-            // Mute / Unmute Toggle
+            // Mute / Unmute Audio Toggle
             IconButton(
-                onClick = {
-                    isMuted = !isMuted
-                    mediaPlayerRef?.let { mp ->
-                        if (isMuted) mp.setVolume(0f, 0f) else mp.setVolume(1f, 1f)
-                    }
-                },
-                modifier = Modifier.size(38.dp)
+                onClick = { isMuted = !isMuted },
+                modifier = Modifier
+                    .size(38.dp)
+                    .background(Color.Black.copy(alpha = 0.35f), CircleShape)
             ) {
                 Icon(
-                    imageVector = if (isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                    imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
                     contentDescription = if (isMuted) "Unmute" else "Mute",
-                    tint = Color.White
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
                 )
             }
 
@@ -409,9 +539,9 @@ private fun VideoPageItem(
             Box(
                 modifier = Modifier
                     .size(38.dp)
-                    .rotate(if (isPlaying) angle else 0f)
+                    .rotate(if (isPlayingState) angle else 0f)
                     .clip(CircleShape)
-                    .background(Color(0xFF212121)),
+                    .background(Color(0xFF1E1E1E)),
                 contentAlignment = Alignment.Center
             ) {
                 Box(
@@ -436,7 +566,7 @@ private fun CategoryHeaderTabs(
     Row(
         modifier = modifier
             .padding(horizontal = 8.dp)
-            .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
+            .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
             .padding(horizontal = 6.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -464,7 +594,7 @@ private fun CategoryHeaderTabs(
 
 @Composable
 private fun ActionIconButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     count: String,
     tint: Color,
     onClick: () -> Unit,
@@ -480,15 +610,60 @@ private fun ActionIconButton(
             imageVector = icon,
             contentDescription = null,
             tint = tint,
-            modifier = Modifier.size(30.dp)
+            modifier = Modifier.size(32.dp)
         )
         Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = count,
             color = Color.White,
             fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.Bold
         )
+    }
+}
+
+@Composable
+private fun OfflineVideoState(
+    onRetry: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.CloudOff,
+            contentDescription = null,
+            tint = LightSunGold,
+            modifier = Modifier.size(68.dp)
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "You are currently offline",
+            color = Color.White,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Connect to the internet to stream high-definition entertainment videos from Akwa Ibom, Africa, China, and the Philippines.",
+            color = Color.White.copy(alpha = 0.75f),
+            fontSize = 13.sp,
+            textAlign = TextAlign.Center,
+            lineHeight = 18.sp
+        )
+        Spacer(modifier = Modifier.height(20.dp))
+        Button(
+            onClick = onRetry,
+            colors = ButtonDefaults.buttonColors(containerColor = LightEmeraldGreen)
+        ) {
+            Icon(imageVector = Icons.Default.Refresh, contentDescription = null)
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Retry Connection")
+        }
     }
 }
 
@@ -522,7 +697,8 @@ private fun EmptyVideoState(
         Text(
             text = "Be the first to share an entertaining clip with the Akwa Ibom community!",
             color = Color.White.copy(alpha = 0.7f),
-            fontSize = 13.sp
+            fontSize = 13.sp,
+            textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(20.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -549,7 +725,7 @@ fun UploadVideoDialog(
 ) {
     var title by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("AkwaIbom") }
-    var videoUrl by remember { mutableStateOf("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4") }
+    var videoUrl by remember { mutableStateOf("https://www.w3schools.com/html/mov_bbb.mp4") }
     val categories = listOf("AkwaIbom", "African", "Chinese", "Philippine")
 
     AlertDialog(
@@ -590,7 +766,7 @@ fun UploadVideoDialog(
                 OutlinedTextField(
                     value = videoUrl,
                     onValueChange = { videoUrl = it },
-                    label = { Text("Video Stream URL (MP4)") },
+                    label = { Text("Video Stream URL (MP4 / HLS)") },
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("input_upload_url")
@@ -612,4 +788,11 @@ fun UploadVideoDialog(
             }
         }
     )
+}
+
+private fun checkInternetConnection(context: Context): Boolean {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return true
+    val activeNetwork = cm.activeNetwork ?: return false
+    val capabilities = cm.getNetworkCapabilities(activeNetwork) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }

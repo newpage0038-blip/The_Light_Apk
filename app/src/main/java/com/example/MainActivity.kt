@@ -28,7 +28,15 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             TheLightAppTheme {
-                TheLightMainApp(viewModel = viewModel)
+                val hasStarted by viewModel.hasStarted.collectAsState()
+
+                if (!hasStarted) {
+                    GetStartedScreen(
+                        onGetStarted = { viewModel.onGetStarted() }
+                    )
+                } else {
+                    TheLightMainApp(viewModel = viewModel)
+                }
             }
         }
     }
@@ -51,9 +59,14 @@ fun TheLightMainApp(viewModel: LightViewModel) {
     val allPosts by viewModel.allPosts.collectAsState()
     val allVideos by viewModel.allVideos.collectAsState()
 
-    // BackHandler: If on any screen other than VIDEOS (Home), return to Home without closing app!
-    BackHandler(enabled = currentTab != AppTab.VIDEOS) {
-        viewModel.selectTab(AppTab.VIDEOS)
+    // BackHandler: If on any secondary screen, return to VIDEOS (Home) without closing app!
+    // If already on VIDEOS, return to Get Started screen
+    BackHandler {
+        if (currentTab != AppTab.VIDEOS) {
+            viewModel.selectTab(AppTab.VIDEOS)
+        } else {
+            viewModel.showGetStarted()
+        }
     }
 
     Scaffold(

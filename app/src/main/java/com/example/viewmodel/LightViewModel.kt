@@ -41,6 +41,7 @@ data class InAppNotification(
     val isRead: Boolean = false
 )
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class LightViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application, viewModelScope)
     private val dao = database.appDao()
@@ -48,6 +49,26 @@ class LightViewModel(application: Application) : AndroidViewModel(application) {
     // Navigation State
     private val _currentTab = MutableStateFlow(AppTab.VIDEOS)
     val currentTab: StateFlow<AppTab> = _currentTab.asStateFlow()
+
+    // Welcome / Get Started State
+    private val _hasStarted = MutableStateFlow(false)
+    val hasStarted: StateFlow<Boolean> = _hasStarted.asStateFlow()
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            // Guarantee fresh working video stream URLs are populated in Room
+            dao.insertVideos(PreseedData.initialVideos)
+        }
+    }
+
+    fun onGetStarted() {
+        _hasStarted.value = true
+        _currentTab.value = AppTab.VIDEOS
+    }
+
+    fun showGetStarted() {
+        _hasStarted.value = false
+    }
 
     private val _userProfile = MutableStateFlow(UserProfile())
     val userProfile: StateFlow<UserProfile> = _userProfile.asStateFlow()

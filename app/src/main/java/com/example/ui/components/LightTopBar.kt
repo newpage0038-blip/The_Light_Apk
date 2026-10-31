@@ -39,14 +39,15 @@ fun LightTopBar(
     Surface(
         modifier = modifier
             .fillMaxWidth()
+            .statusBarsPadding()
             .testTag("light_top_bar"),
         color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 3.dp
+        shadowElevation = 4.dp
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),

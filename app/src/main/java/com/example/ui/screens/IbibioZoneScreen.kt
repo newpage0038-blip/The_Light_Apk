@@ -9,6 +9,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -163,7 +165,7 @@ fun IbibioZoneScreen(
             onDismissRequest = { showPlayingAudioText = null },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(imageVector = Icons.Default.VolumeUp, contentDescription = null, tint = LightEmeraldGreen)
+                    Icon(imageVector = Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, tint = LightEmeraldGreen)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Ibibio Pronunciation", fontWeight = FontWeight.Bold)
                 }
@@ -333,7 +335,7 @@ private fun IbibioLoungeView(
                             .background(LightEmeraldGreen, CircleShape)
                             .testTag("btn_send_ibibio")
                     ) {
-                        Icon(imageVector = Icons.Default.Send, contentDescription = "Send", tint = Color.White)
+                        Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color.White)
                     }
                 }
             }
@@ -411,7 +413,7 @@ private fun IbibioDictionaryView(
                                 .size(40.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Default.VolumeUp,
+                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                                 contentDescription = "Play Pronunciation",
                                 tint = LightEmeraldGreen
                             )
@@ -461,7 +463,7 @@ private fun IbibioProverbsView(
                             color = LightSunriseOrange
                         )
                         IconButton(onClick = { onPlayAudio(p.ibibioText) }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.VolumeUp, contentDescription = "Play", tint = LightEmeraldGreen)
+                            Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Play", tint = LightEmeraldGreen)
                         }
                     }
                     Text(

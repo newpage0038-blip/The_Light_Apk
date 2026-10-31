@@ -8,6 +8,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -34,10 +35,11 @@ fun LightBottomNav(
     Surface(
         modifier = modifier
             .fillMaxWidth()
+            .navigationBarsPadding()
             .testTag("light_bottom_nav"),
         color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 8.dp,
-        tonalElevation = 2.dp
+        shadowElevation = 10.dp,
+        tonalElevation = 3.dp
     ) {
         val scrollState = rememberScrollState()
 
@@ -68,7 +70,7 @@ fun LightBottomNav(
             NavItem(
                 tab = AppTab.CHAT,
                 isSelected = currentTab == AppTab.CHAT,
-                icon = Icons.Default.Chat,
+                icon = Icons.AutoMirrored.Filled.Chat,
                 label = "Messages",
                 badge = "3",
                 onClick = { onTabSelected(AppTab.CHAT) }

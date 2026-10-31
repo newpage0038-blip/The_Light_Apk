@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Comment
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -314,7 +315,7 @@ private fun PostItemCard(
                     modifier = Modifier.testTag("btn_post_comment_${post.id}")
                 ) {
                     Icon(
-                        imageVector = Icons.Outlined.Comment,
+                        imageVector = Icons.AutoMirrored.Outlined.Comment,
                         contentDescription = "Comment",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp)
